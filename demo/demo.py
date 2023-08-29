@@ -9,7 +9,7 @@ import time
 import warnings
 import cv2
 import tqdm
-import json
+import shutil
 
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
@@ -47,6 +47,7 @@ def get_parser():
     )
     parser.add_argument("--webcam", action="store_true", help="Take inputs from webcam.")
     parser.add_argument("--video-input", help="Path to video file.")
+    
     parser.add_argument(
         "--input",
         nargs="+",
@@ -66,19 +67,26 @@ def get_parser():
         help="Minimum score for instance predictions to be shown",
     )
 
+    # 1+2
+    parser.add_argument( "--save_pred", type=int, default=1)
+    parser.add_argument( "--save_overlay_withclass", type=int, default=1)
 
-    parser.add_argument( "--save_pred", default=True)
-    parser.add_argument( "--save_overlay_withclass", default=True)
+    # 3. (used in main)
+    parser.add_argument( "--save_complete_mask", type=int, default=1)
+    parser.add_argument( "--save_component_mask", type=int, default=1)
+    parser.add_argument(    "--num_mask_component", type=int, default=5)
 
-    parser.add_argument( "--save_overlay", default=True)
-    parser.add_argument( "--save_dilate", default=True)
+    # 3. (used in process_and_save_mask)
+    parser.add_argument( "--save_mask", type=int, default=1)
+    parser.add_argument( "--save_mask_overlay", type=int, default=1)
+    parser.add_argument( "--save_dilate_mask", type=int, default=1)
+    parser.add_argument( "--save_dilate_mask_overlay", type=int, default=1)
     parser.add_argument(    "--mask_dilate_kernelsize", type=int, default=5)
     parser.add_argument(    "--mask_dilate_iter",       type=int, default=18)
 
-    parser.add_argument( "--save_complete_mask", default=True)
-    parser.add_argument( "--save_component_mask", default=True)
-    parser.add_argument(    "--num_component", type=int, default=5)
-
+    parser.add_argument( "--save_lama_format",type=int, default=1,
+                        help="If true, output directories will be formatted for running lama's predict.py directly with them as indir") 
+ 
 
 
     parser.add_argument(
@@ -109,31 +117,36 @@ def test_opencv_video_format(codec, file_ext):
 
 
 def process_and_save_mask(mask_to_save, mask_pathname, mask_overlay_pathname, dilated_mask_pathname, dilated_mask_overlay_pathname):
+    mask_to_save = mask_to_save.astype(np.uint8)
+    
     # a. Binary Mask
-    cv2.imwrite(mask_pathname, mask_to_save*255)
-
-    if args.save_overlay:
-        # b. Binary Mask's Overlay
+    if args.save_mask:
+        if not os.path.exists(os.path.split(mask_pathname)[0]): os.makedirs(os.path.split(mask_pathname)[0])
+        cv2.imwrite(mask_pathname, mask_to_save*255)
+    # b. Binary Mask's Overlay
+    if args.save_mask_overlay:
+        if not os.path.exists(os.path.split(mask_overlay_pathname)[0]): os.makedirs(os.path.split(mask_overlay_pathname)[0])
         a = np.expand_dims(mask_to_save, axis=2) # (675, 1200, 1)
         b = np.concatenate((a, a, a), axis=2)*255 # (675, 1200, 3) == img.shape
         overlay = cv2.addWeighted(b,0.75, img,1, 0)
         cv2.imwrite(mask_overlay_pathname, overlay)
 
- 
-    if args.save_dilate:
-        # c. Dilated Mask 
-        # Perform dilation using ellipse kernel
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (args.mask_dilate_kernelsize, args.mask_dilate_kernelsize))
-        dilate_combined_mask = cv2.dilate(mask_to_save.astype(np.uint8), kernel, iterations=args.mask_dilate_iter)
-            # To extend the True/1 regions further: increase the kernel size, repeat dilation operation using iteration
-        cv2.imwrite(dilated_mask_pathname, dilate_combined_mask*255)
 
-        if args.save_overlay:
-            # d. Dilated Mask's Ooverlay
-            a = np.expand_dims(dilate_combined_mask, axis=2) # (675, 1200, 1)
-            b = np.concatenate((a, a, a), axis=2)*255 # (675, 1200, 3) == img.shape
-            dilated_overlay = cv2.addWeighted(b,0.75, img,1, 0)
-            cv2.imwrite(dilated_mask_overlay_pathname, dilated_overlay)
+    if args.save_dilate_mask or args.save_dilate_mask_overlay: # Perform dilation using ellipse kernel
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (args.mask_dilate_kernelsize, args.mask_dilate_kernelsize))
+        dilate_combined_mask = cv2.dilate(mask_to_save, kernel, iterations=args.mask_dilate_iter)
+            # To extend the True/1 regions further: increase the kernel size, repeat dilation operation using iteration
+    # c. Dilated Mask 
+    if args.save_dilate_mask:
+        if not os.path.exists(os.path.split(dilated_mask_pathname)[0]): os.makedirs(os.path.split(dilated_mask_pathname)[0])
+        cv2.imwrite(dilated_mask_pathname, dilate_combined_mask*255)
+    # d. Dilated Mask's Ooverlay
+    if args.save_dilate_mask_overlay:
+        if not os.path.exists(os.path.split(dilated_mask_overlay_pathname)[0]): os.makedirs(os.path.split(dilated_mask_overlay_pathname)[0])
+        a = np.expand_dims(dilate_combined_mask, axis=2) # (675, 1200, 1)
+        b = np.concatenate((a, a, a), axis=2)*255 # (675, 1200, 3) == img.shape
+        dilated_overlay = cv2.addWeighted(b,0.75, img,1, 0)
+        cv2.imwrite(dilated_mask_overlay_pathname, dilated_overlay)
 
 
 
@@ -153,6 +166,8 @@ if __name__ == "__main__":
             args.input = glob.glob(os.path.expanduser(args.input[0]))
             assert args.input, "The input path(s) was not found"
         for path in tqdm.tqdm(args.input, disable=not args.output):
+            if os.path.isdir(path): continue
+
             # use PIL, to be consistent with evaluation
             img = read_image(path, format="BGR")
             start_time = time.time()
@@ -223,13 +238,15 @@ if __name__ == "__main__":
                         out_filename = args.output
 
                 else:
-                    if os.path.isdir(args.output):
-                        pass
+                    if not os.path.exists(args.output): 
+                        os.makedirs(args.output)
                     else:
-                        assert len(args.input) == 1, "Please specify a directory with args.output" # destined to raise assertion error
+                        if not os.path.isdir(args.output):
+                            assert len(args.input) == 1, "Please specify a directory with args.output" # always raises assertion error
 
 
                 fname, ext = os.path.basename(path).split('.')[0], os.path.basename(path).split('.')[1]
+                if args.save_lama_format: ext="png"
 
                 # 1. Save prediction (contains: pred_boxes)
                 if args.save_pred:
@@ -247,50 +264,46 @@ if __name__ == "__main__":
                     visualized_output.save(os.path.join(mask_overlay_dirpath, f"{fname}_overlay_withclass.{ext}"))
 
 
+
                 # 3. Save binary mask (merged boxes), mask overlay, dilated mask, dilated mask overlay
                 masks = predictions['instances'].get('pred_masks').to('cpu').numpy()
                 num, h, w = masks.shape
-                combined_masks, mask_pathnames, dilated_mask_pathnames, dilated_overlay_pathnames = [], [], [], []
                 # args.mask_dilate_kernelsize, args.mask_dilate_iter = int(args.mask_dilate_kernelsize), int(args.mask_dilate_iter) # TODO: remove
-
 
                 ## 3a. complete: one overall mask
                 if args.save_complete_mask:
+                    # print(f"...saving complete masks to: {os.path.join(args.output, 'complete_mask')}")
                     mask_dirpath =                 os.path.join(args.output, "complete_mask", "mask")
-                    mask_overlay_dirpath =         os.path.join(args.output, "complete_mask", "mask_overlay")
+                    mask_overlay_dirpath =         os.path.join(mask_dirpath, "mask_overlay")
                     dilated_mask_dirpath =         os.path.join(args.output, "complete_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}")
-                    dilated_mask_overlay_dirpath = os.path.join(args.output, "complete_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}_overlay")
-                    if not os.path.exists(mask_dirpath): os.makedirs(mask_dirpath)
-                    if not os.path.exists(mask_overlay_dirpath): os.makedirs(mask_overlay_dirpath)
-                    if not os.path.exists(dilated_mask_dirpath): os.makedirs(dilated_mask_dirpath)
-                    if not os.path.exists(dilated_mask_overlay_dirpath): os.makedirs(dilated_mask_overlay_dirpath)
-                    print(f"...saving complete masks to: {os.path.join(args.output, 'complete_mask')}")
-
+                    dilated_mask_overlay_dirpath = os.path.join(dilated_mask_dirpath, f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}_overlay")
+                    
                     complete_mask = np.zeros((h, w))
                     for m in masks: 
-                        complete_mask = np.logical_or(complete_mask, m)
+                        complete_mask = np.logical_or(complete_mask, m) # print(f"np.sum(combined_mask)={np.sum(combined_mask)}", h, w)
                     process_and_save_mask(complete_mask, 
                                          os.path.join(mask_dirpath,         f"{fname}_mask.{ext}"), os.path.join(mask_overlay_dirpath,         f"{fname}_overlay.{ext}"),
                                          os.path.join(dilated_mask_dirpath, f"{fname}_mask.{ext}"), os.path.join(dilated_mask_overlay_dirpath, f"{fname}_overlay.{ext}"))
+                    
+                    if args.save_lama_format:
+                        if args.save_mask:        shutil.copy(path, os.path.join(mask_dirpath,         f"{fname}.{ext}"))
+                        if args.save_dilate_mask: shutil.copy(path, os.path.join(dilated_mask_dirpath, f"{fname}.{ext}"))
 
                     
                 ## 3b: multiple component masks
                 if args.save_component_mask:
+                    # print(f"...saving component masks to: {os.path.join(args.output, 'component_mask')}")'
                     component_mask_dirpath =                 os.path.join(args.output, "component_mask", "mask")
-                    component_mask_overlay_dirpath =         os.path.join(args.output, "component_mask", "mask_overlay")
+                    component_mask_overlay_dirpath =         os.path.join(component_mask_dirpath, "mask_overlay")
                     component_dilated_mask_dirpath =         os.path.join(args.output, "component_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}")
-                    component_dilated_mask_overlay_dirpath = os.path.join(args.output, "component_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}_overlay")
-                    if not os.path.exists(component_mask_dirpath): os.makedirs(component_mask_dirpath)
-                    if not os.path.exists(component_mask_overlay_dirpath): os.makedirs(component_mask_overlay_dirpath)
-                    if not os.path.exists(component_dilated_mask_dirpath): os.makedirs(component_dilated_mask_dirpath)
-                    if not os.path.exists(component_dilated_mask_overlay_dirpath): os.makedirs(component_dilated_mask_overlay_dirpath)
-                    print(f"...saving component masks to: {os.path.join(args.output, 'component_mask')}")
+                    component_dilated_mask_overlay_dirpath = os.path.join(component_dilated_mask_dirpath, f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}_overlay")
 
-                    component_size = num//args.num_component # eg. 76//5=15
-                    start_indices = list(np.arange(args.num_component)*component_size) # eg. [0, 15, 30, 45, 60]
+
+                    component_size = num//args.num_mask_component # eg. 76//5=15
+                    start_indices = list(np.arange(args.num_mask_component)*component_size) # eg. [0, 15, 30, 45, 60]
                     start_indices.append(num) # eg. [0, 15, 30, 45, 60, 76]
                     
-                    for i in range(args.num_component): #==len(start_indices)-1)
+                    for i in range(args.num_mask_component): #==len(start_indices)-1)
                         component_mask = np.zeros((h, w))
                         for m in masks[start_indices[i] : start_indices[i+1]]: # last component may have more boxes (eg. 16 for 76 total)
                             component_mask = np.logical_or(component_mask, m)
@@ -298,13 +311,21 @@ if __name__ == "__main__":
                                               os.path.join(component_mask_dirpath,         f"{fname}_mask{i}.{ext}"), os.path.join(component_mask_overlay_dirpath,         f"{fname}_overlay{i}.{ext}"),
                                               os.path.join(component_dilated_mask_dirpath, f"{fname}_mask{i}.{ext}"), os.path.join(component_dilated_mask_overlay_dirpath, f"{fname}_overlay{i}.{ext}"))
  
-                        combined_masks.append(component_mask)
-                        mask_pathnames.append(os.path.join(component_mask_dirpath, f"{fname}_mask{i}.{ext}"))
-                        dilated_mask_pathnames.append(os.path.join(component_dilated_mask_dirpath, f"{fname}_mask{i}.{ext}"))
-                        dilated_overlay_pathnames.append(os.path.join(component_dilated_mask_overlay_dirpath, f"{fname}_dilated_overlay{i}.{ext}"))
+                    if args.save_lama_format:
+                        for format_i in range(args.num_mask_component):
+                            format_i = str(format_i)
+                            if args.save_mask:
+                                if not os.path.exists(os.path.join(component_mask_dirpath,format_i)): os.makedirs(os.path.join(component_mask_dirpath,format_i))
+                                shutil.move(os.path.join(component_mask_dirpath,           f"{fname}_mask{format_i}.{ext}"),
+                                            os.path.join(component_mask_dirpath, format_i, f"{fname}_mask{format_i}.{ext}"))
+                            if args.save_dilate_mask:
+                                if not os.path.exists(os.path.join(component_dilated_mask_dirpath,format_i)): os.makedirs(os.path.join(component_dilated_mask_dirpath,format_i))
+                                shutil.move(os.path.join(component_dilated_mask_dirpath,           f"{fname}_mask{format_i}.{ext}"),
+                                            os.path.join(component_dilated_mask_dirpath, format_i, f"{fname}_mask{format_i}.{ext}"))
+                        
+                        if args.save_mask:         shutil.copy(path, os.path.join(component_mask_dirpath,         "0", f"{fname}.{ext}"))
+                        if args.save_dilate_mask:  shutil.copy(path, os.path.join(component_dilated_mask_dirpath, "0", f"{fname}.{ext}"))
 
-                    # print(combined_mask)
-                    # print(f"np.sum(combined_mask)={np.sum(combined_mask)}", h, w)
                     
 
 
