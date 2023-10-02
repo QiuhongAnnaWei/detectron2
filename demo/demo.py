@@ -76,7 +76,7 @@ def get_parser():
     parser.add_argument( "--save_component_mask", type=int, default=1)
     parser.add_argument(    "--num_mask_component", type=int, default=5)
 
-    # 3. (used in process_and_save_mask)
+    # 3. (used in process_and_save_mask, subflags for saving complete mask and component mask)
     parser.add_argument( "--save_mask", type=int, default=1)
     parser.add_argument( "--save_mask_overlay", type=int, default=1)
     parser.add_argument( "--save_dilate_mask", type=int, default=1)
