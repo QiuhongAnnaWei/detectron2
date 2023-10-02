@@ -67,7 +67,7 @@ def get_parser():
         help="Minimum score for instance predictions to be shown",
     )
 
-    # 1+2
+    # 1+2 (used in main)
     parser.add_argument( "--save_pred", type=int, default=1)
     parser.add_argument( "--save_overlay_withclass", type=int, default=1)
 
@@ -87,6 +87,9 @@ def get_parser():
     parser.add_argument( "--save_lama_format",type=int, default=1,
                         help="If true, output directories will be formatted for running lama's predict.py directly with them as indir") 
  
+    # 4. (used in main)
+    parser.add_argument( "--save_instance_mask", type=int, default=1,
+                        help="all but the object mask area blacked out; for zero123; by default dilate")
 
 
     parser.add_argument(
@@ -140,13 +143,14 @@ def process_and_save_mask(mask_to_save, mask_pathname, mask_overlay_pathname, di
     if args.save_dilate_mask:
         if not os.path.exists(os.path.split(dilated_mask_pathname)[0]): os.makedirs(os.path.split(dilated_mask_pathname)[0])
         cv2.imwrite(dilated_mask_pathname, dilate_combined_mask*255)
-    # d. Dilated Mask's Ooverlay
+    # d. Dilated Mask's Overlay
     if args.save_dilate_mask_overlay:
         if not os.path.exists(os.path.split(dilated_mask_overlay_pathname)[0]): os.makedirs(os.path.split(dilated_mask_overlay_pathname)[0])
         a = np.expand_dims(dilate_combined_mask, axis=2) # (675, 1200, 1)
         b = np.concatenate((a, a, a), axis=2)*255 # (675, 1200, 3) == img.shape
         dilated_overlay = cv2.addWeighted(b,0.75, img,1, 0)
         cv2.imwrite(dilated_mask_overlay_pathname, dilated_overlay)
+
 
 
 
@@ -325,6 +329,28 @@ if __name__ == "__main__":
                         
                         if args.save_mask:         shutil.copy(path, os.path.join(component_mask_dirpath,         "0", f"{fname}.{ext}"))
                         if args.save_dilate_mask:  shutil.copy(path, os.path.join(component_dilated_mask_dirpath, "0", f"{fname}.{ext}"))
+
+                # 4. object mask (all but the object mask area blacked out; for zero123; by default dilate)
+                if args.save_instance_mask:
+                    # instance_mask_dirpath = os.path.join(args.output, "instance_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}", fname)
+                    instance_mask_dirpath = os.path.join(args.output, "instance_mask", f"mask", fname)
+
+                    if not os.path.exists(instance_mask_dirpath): os.makedirs(instance_mask_dirpath)
+
+                    ext="png"
+                    img = np.float32(img)
+                    for i, m in enumerate(masks): 
+                        m = np.float32(m)
+                        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (args.mask_dilate_kernelsize, args.mask_dilate_kernelsize))
+                        # m = cv2.dilate(m, kernel, iterations=args.mask_dilate_iter)
+                            # To extend the True/1 regions further: increase the kernel size, repeat dilation operation using iteration
+
+                        a = np.expand_dims(m, axis=2) # (675, 1200, 1)
+                        b = np.concatenate((a, a, a), axis=2) # (675, 1200, 3) == img.shape (masked region=1)
+                        # img_bgra = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
+
+                        object_mask = cv2.multiply(img, np.float32(b))
+                        cv2.imwrite(os.path.join(instance_mask_dirpath, f"{fname}_instance{i}.{ext}"), object_mask)
 
                     
 
