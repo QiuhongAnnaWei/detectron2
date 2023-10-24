@@ -155,6 +155,7 @@ def process_and_save_mask(mask_to_save, mask_pathname, mask_overlay_pathname, di
 
 
 if __name__ == "__main__":
+    print("##### DETECTRON2: STARTED #####")
     mp.set_start_method("spawn", force=True)
     args = get_parser().parse_args()
     setup_logger(name="fvcore")
@@ -169,8 +170,12 @@ if __name__ == "__main__":
         if len(args.input) == 1:
             args.input = glob.glob(os.path.expanduser(args.input[0]))
             assert args.input, "The input path(s) was not found"
+        # i=0
         for path in tqdm.tqdm(args.input, disable=not args.output):
             if os.path.isdir(path): continue
+
+            # if i%100==0: print(f"d2: path={path}")
+            # i+=1
 
             # use PIL, to be consistent with evaluation
             img = read_image(path, format="BGR")
@@ -272,7 +277,6 @@ if __name__ == "__main__":
                 # 3. Save binary mask (merged boxes), mask overlay, dilated mask, dilated mask overlay
                 masks = predictions['instances'].get('pred_masks').to('cpu').numpy()
                 num, h, w = masks.shape
-                # args.mask_dilate_kernelsize, args.mask_dilate_iter = int(args.mask_dilate_kernelsize), int(args.mask_dilate_iter) # TODO: remove
 
                 ## 3a. complete: one overall mask
                 if args.save_complete_mask:
@@ -332,6 +336,7 @@ if __name__ == "__main__":
 
                 # 4. object mask (all but the object mask area blacked out; for zero123; by default dilate)
                 if args.save_instance_mask:
+                    # print(f"\nargs.save_instance_mask={args.save_instance_mask}")
                     # instance_mask_dirpath = os.path.join(args.output, "instance_mask", f"dilated_mask_kernel{args.mask_dilate_kernelsize}iter{args.mask_dilate_iter}", fname)
                     instance_mask_dirpath = os.path.join(args.output, "instance_mask", f"mask", fname)
 
@@ -339,6 +344,8 @@ if __name__ == "__main__":
 
                     ext="png"
                     img = np.float32(img)
+                    idx = masks.sum(axis=(1,2)).argsort()[::-1] # sort binary mask from largest area to lowest
+                    masks = masks[idx]
                     for i, m in enumerate(masks): 
                         m = np.float32(m)
                         # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (args.mask_dilate_kernelsize, args.mask_dilate_kernelsize))
@@ -350,19 +357,13 @@ if __name__ == "__main__":
                         # img_bgra = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
                         object_mask = cv2.multiply(img, np.float32(b))
-                        cv2.imwrite(os.path.join(instance_mask_dirpath, f"{fname}_instance{i}.{ext}"), object_mask)
-
-                    
-
+                        cv2.imwrite(os.path.join(instance_mask_dirpath, f"{fname}_instance{str(i).zfill(4)}.{ext}"), object_mask)
 
             else:
                 cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
                 cv2.imshow(WINDOW_NAME, visualized_output.get_image()[:, :, ::-1])
                 if cv2.waitKey(0) == 27:
                     break  # esc to quit
-
-
-
 
 
     elif args.webcam:
@@ -418,3 +419,5 @@ if __name__ == "__main__":
             output_file.release()
         else:
             cv2.destroyAllWindows()
+
+    print("##### DETECTRON2: FINISHED #####")
